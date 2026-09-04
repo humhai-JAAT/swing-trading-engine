@@ -1,0 +1,27 @@
+name: Keep Streamlit App Awake
+
+on:
+  schedule:
+    # 03:20 UTC = 08:50 IST (before market open) | 11:20 UTC = 16:50 IST (after close) | 19:20 UTC = 00:50 IST (overnight)
+    - cron: '20 3,11,19 * * *'
+  workflow_dispatch:
+
+jobs:
+  wake:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Playwright
+        run: |
+          pip install playwright
+          playwright install --with-deps chromium
+
+      - name: Wake/ping the Streamlit app
+        run: python scripts/wake_streamlit.py
+        env:
+          APP_URL: https://swing-trading-engine.streamlit.app/
