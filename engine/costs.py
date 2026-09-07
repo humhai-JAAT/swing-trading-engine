@@ -63,6 +63,12 @@ def calc_charges(order_value: float, side: str) -> ChargeBreakdown:
     )
 
 
+def estimate_buy_charge_pct() -> float:
+    """Approximate buy-side charges as a fraction of order value, for sizing."""
+    return BROKERAGE_PCT + STT_PCT + STAMP_BUY_PCT + EXCHANGE_PCT + SEBI_PCT + IPFT_PCT + \
+        GST_RATE * (BROKERAGE_PCT + EXCHANGE_PCT + SEBI_PCT + IPFT_PCT)
+
+
 def round_trip_charges(entry_value: float, exit_value: float) -> tuple[float, float]:
     entry = calc_charges(entry_value, "buy")
     exit_ = calc_charges(exit_value, "sell")

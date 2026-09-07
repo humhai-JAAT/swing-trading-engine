@@ -59,7 +59,7 @@ if col_b.button("Stop", use_container_width=True, disabled=not running):
 
 st.sidebar.caption(
     f"Position management every {settings['position_management_interval_minutes']} min · "
-    f"entry scan at 1H-boundary+1 offsets (10:16, 11:16, 12:16, 13:16, 14:16) · "
+    f"entry scan at 1H-boundary+1 offsets (10:16, 11:16, 12:16, 13:16, 14:16, 15:16) · "
     f"awake only {settings['wake_time']}–{settings['sleep_time']} IST."
 )
 

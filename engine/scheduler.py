@@ -4,8 +4,8 @@
      default 2) — manages any of the 2 variants' open positions.
   2. Entry scanning (Stage 1 + Stage 2 + both variants' scan_for_entry),
      aligned to 1H candle boundaries with a 1-min safety offset — fires at
-     10:16, 11:16, 12:16, 13:16, 14:16 (1 min after each hourly candle close
-     at X:15, market opens at 09:15).
+     10:16, 11:16, 12:16, 13:16, 14:16, 15:16 (1 min after each hourly candle
+     close at X:15, market opens at 09:15, last candle 14:15-15:15).
 
 No subh30 checkpoint concept. CNC carry-forward — no intraday square-off.
 """
@@ -20,6 +20,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from common.helpers import get_logger
 from engine import config, db, live_feed, nse_universe, stage1_ranking, stage2_candles, strategy, variant_engine
 from engine.broker_accounts import get_configured_accounts
+from engine.holidays import is_nse_holiday
 
 logger = get_logger(__name__)
 IST = pytz.timezone("Asia/Kolkata")
@@ -45,6 +46,8 @@ def market_status(now: datetime | None = None) -> str:
     now = now or _now_ist()
     if now.weekday() >= 5:
         return "closed_weekend"
+    if is_nse_holiday(now.date()):
+        return "closed_holiday"
     if now.time() < MARKET_OPEN or now.time() >= MARKET_CLOSE:
         return "closed_hours"
     return "open"
@@ -135,13 +138,19 @@ def run_full_scan_cycle(settings: dict | None = None) -> dict:
                 logger.warning(f"Subset-safety warnings: {subset_warnings}")
 
             unique_symbols = stage2_candles.merge_unique_symbols(top_lists)
-            candle_interval = config.DEFAULTS.get("candle_interval", "1h")
-            candle_days = config.DEFAULTS.get("candle_fetch_calendar_days", stage2_candles.CALENDAR_FETCH_DAYS)
+            candle_interval = settings.get("candle_interval", "1h")
+            candle_days = int(settings.get("candle_fetch_calendar_days", stage2_candles.CALENDAR_FETCH_DAYS))
+            candle_lookback = int(settings.get("candle_lookback_trading_days", stage2_candles.CANDLE_LOOKBACK_TRADING_DAYS))
             stage2_result = stage2_candles.fetch_candle_history(
-                unique_symbols, interval=candle_interval, period_days=candle_days
+                unique_symbols, interval=candle_interval, period_days=candle_days,
+                lookback_trading_days=candle_lookback,
             )
             if stage2_result.warnings:
                 logger.warning(f"Stage 2 warnings: {stage2_result.warnings}")
+
+            freshness_warnings = _check_candle_freshness(stage2_result.candles_by_symbol, now)
+            if freshness_warnings:
+                logger.warning(f"Data freshness: {freshness_warnings}")
 
             indicator_cache = strategy.build_indicator_cache(stage2_result.candles_by_symbol)
 
@@ -162,7 +171,7 @@ def run_full_scan_cycle(settings: dict | None = None) -> dict:
                 for c in result.get("candidates", [])
                 if isinstance(c.get("reason"), str) and c["reason"].startswith("error:")
             ]
-            all_warnings = stage1_result.warnings + subset_warnings + stage2_result.warnings + strategy_warnings
+            all_warnings = stage1_result.warnings + subset_warnings + stage2_result.warnings + freshness_warnings + strategy_warnings
             entered = [v for v, r in scan_results.items() if r.get("action") == "enter"]
             db.log_cycle(
                 status="OK", stage="entry_scan",
@@ -182,6 +191,32 @@ def run_full_scan_cycle(settings: dict | None = None) -> dict:
             logger.error(f"Entry scan cycle crashed mid-execution: {e}")
             db.log_cycle(status="ERROR", stage="entry_scan", error=str(e))
             raise
+
+
+STALE_CANDLE_HOURS = 26
+
+
+def _check_candle_freshness(candles_by_symbol: dict, now: datetime) -> list[str]:
+    """Flag symbols whose latest candle is older than STALE_CANDLE_HOURS."""
+    warnings: list[str] = []
+    stale = []
+    for symbol, df in candles_by_symbol.items():
+        if df is None or df.empty:
+            continue
+        last_ts = df.index[-1]
+        if hasattr(last_ts, "tzinfo") and last_ts.tzinfo is None:
+            last_ts = IST.localize(last_ts)
+        age_hours = (now - last_ts).total_seconds() / 3600
+        if age_hours > STALE_CANDLE_HOURS:
+            stale.append((symbol, round(age_hours, 1)))
+    if stale:
+        sample = stale[:5]
+        desc = ", ".join(f"{s} ({h}h old)" for s, h in sample)
+        warnings.append(
+            f"{len(stale)}/{len(candles_by_symbol)} symbols have stale candle data "
+            f"(>{STALE_CANDLE_HOURS}h): {desc}{'...' if len(stale) > 5 else ''}"
+        )
+    return warnings
 
 
 def _position_job():
@@ -230,11 +265,11 @@ def start_scheduler() -> None:
         next_run_time=datetime.now(IST),
     )
 
-    # 1H candle boundary aligned: fires at :16 past hours 10-14 (1 min after
-    # each 1H candle close at X:15, market opens at 09:15).
+    # 1H candle boundary aligned: fires at :16 past hours 10-15 (1 min after
+    # each 1H candle close at X:15, market opens at 09:15, last candle 14:15-15:15).
     scheduler.add_job(
         _scan_job,
-        trigger=CronTrigger(hour="10,11,12,13,14", minute="16", timezone="Asia/Kolkata"),
+        trigger=CronTrigger(hour="10,11,12,13,14,15", minute="16", timezone="Asia/Kolkata"),
         id=SCAN_JOB_ID, replace_existing=True,
     )
 
@@ -244,7 +279,7 @@ def start_scheduler() -> None:
     live_feed_started = live_feed.start()
 
     logger.info(f"Scheduler started: position management every {position_minutes} min, "
-                f"entry scan at 1H-boundary+1 offsets (10:16-14:16), "
+                f"entry scan at 1H-boundary+1 offsets (10:16-15:16), "
                 f"live-feed tick-driven exits {'ON' if live_feed_started else 'OFF (no Groww account)'}")
 
 

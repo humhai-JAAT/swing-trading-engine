@@ -72,8 +72,8 @@ class TestScanScheduleTiming:
 
     def test_scan_job_hours(self):
         from apscheduler.triggers.cron import CronTrigger
-        trigger = CronTrigger(hour="10,11,12,13,14", minute="16", timezone="Asia/Kolkata")
-        # Fire times should be at :16 past hours 10-14
+        trigger = CronTrigger(hour="10,11,12,13,14,15", minute="16", timezone="Asia/Kolkata")
+        # Fire times should be at :16 past hours 10-15
         base = IST.localize(datetime(2026, 9, 1, 9, 0))
         fire = trigger.get_next_fire_time(None, base)
         assert fire.hour == 10
@@ -87,9 +87,9 @@ class TestScanScheduleTiming:
         assert fire3.hour == 12
         assert fire3.minute == 16
 
-    def test_five_scans_per_day(self):
+    def test_six_scans_per_day(self):
         from apscheduler.triggers.cron import CronTrigger
-        trigger = CronTrigger(hour="10,11,12,13,14", minute="16", timezone="Asia/Kolkata")
+        trigger = CronTrigger(hour="10,11,12,13,14,15", minute="16", timezone="Asia/Kolkata")
         base = IST.localize(datetime(2026, 9, 1, 9, 0))
         fires = []
         current = base
@@ -101,4 +101,4 @@ class TestScanScheduleTiming:
             current = fire
 
         day1_fires = [f for f in fires if f.date() == base.date()]
-        assert len(day1_fires) == 5
+        assert len(day1_fires) == 6

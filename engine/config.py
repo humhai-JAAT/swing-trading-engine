@@ -40,8 +40,8 @@ DEFAULTS = {
     "atr_period": 14,
     "atr_multiplier": 1.5,
     "candle_interval": "1h",
-    "candle_fetch_calendar_days": 30,
-    "candle_lookback_trading_days": 15,
+    "candle_fetch_calendar_days": 45,
+    "candle_lookback_trading_days": 25,
     "public_variant": "",
 }
 

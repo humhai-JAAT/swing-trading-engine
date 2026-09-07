@@ -57,10 +57,10 @@ class TestDefaults:
         assert config.DEFAULTS["candle_interval"] == "1h"
 
     def test_candle_fetch_calendar_days(self):
-        assert config.DEFAULTS["candle_fetch_calendar_days"] == 30
+        assert config.DEFAULTS["candle_fetch_calendar_days"] == 45
 
     def test_candle_lookback_trading_days(self):
-        assert config.DEFAULTS["candle_lookback_trading_days"] == 15
+        assert config.DEFAULTS["candle_lookback_trading_days"] == 25
 
     def test_starting_capital(self):
         assert config.DEFAULTS["starting_capital"] == 10000

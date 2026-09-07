@@ -14,8 +14,8 @@ logger = get_logger(__name__)
 
 CANDLE_WORKERS_PER_ACCOUNT = 3
 
-CALENDAR_FETCH_DAYS = 30
-CANDLE_LOOKBACK_TRADING_DAYS = 15
+CALENDAR_FETCH_DAYS = 45
+CANDLE_LOOKBACK_TRADING_DAYS = 25
 
 
 def trim_to_last_n_trading_days(df: "pd.DataFrame | None", n_days: int) -> "pd.DataFrame | None":
@@ -53,6 +53,7 @@ def _fetch_one(account: BrokerAccount, symbol: str, interval: str, period_days: 
 
 def fetch_candle_history(symbols: list[str], interval: str = "1h",
                           period_days: int = CALENDAR_FETCH_DAYS,
+                          lookback_trading_days: int = CANDLE_LOOKBACK_TRADING_DAYS,
                           primary_accounts: list[BrokerAccount] | None = None,
                           fallback_accounts: list[BrokerAccount] | None = None) -> Stage2Result:
     accounts = get_configured_accounts()
@@ -84,7 +85,7 @@ def fetch_candle_history(symbols: list[str], interval: str = "1h",
             except Exception as e:
                 logger.warning(f"Stage 2 fetch for {symbol} raised: {e}")
                 df = None
-            df = trim_to_last_n_trading_days(df, CANDLE_LOOKBACK_TRADING_DAYS)
+            df = trim_to_last_n_trading_days(df, lookback_trading_days)
             if df is not None and not df.empty:
                 result.candles_by_symbol[symbol] = df
             else:
@@ -106,7 +107,7 @@ def fetch_candle_history(symbols: list[str], interval: str = "1h",
                 except Exception as e:
                     logger.warning(f"Stage 2 fallback fetch for {symbol} raised: {e}")
                     df = None
-                df = trim_to_last_n_trading_days(df, CANDLE_LOOKBACK_TRADING_DAYS)
+                df = trim_to_last_n_trading_days(df, lookback_trading_days)
                 if df is not None and not df.empty:
                     result.candles_by_symbol[symbol] = df
                 else:

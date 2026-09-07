@@ -408,11 +408,17 @@ class GrowwAccount(BrokerAccount):
                 payload = self.quote_limiter.call(_do_request)
                 for key, ohlc in (payload or {}).items():
                     symbol = key.replace("NSE_", "", 1)
-                    open_price = ohlc.get("open")
                     close_price = ohlc.get("close")
-                    if not open_price or close_price is None:
+                    if close_price is None:
                         continue
-                    pct_change = (close_price - open_price) / open_price * 100
+                    prev_close = ohlc.get("previousClose") or ohlc.get("prev_close")
+                    if prev_close:
+                        pct_change = (close_price - prev_close) / prev_close * 100
+                    else:
+                        open_price = ohlc.get("open")
+                        if not open_price:
+                            continue
+                        pct_change = (close_price - open_price) / open_price * 100
                     results.append(QuoteResult(symbol=symbol, last_price=float(close_price),
                                                 pct_change=float(pct_change)))
             except Exception as e:

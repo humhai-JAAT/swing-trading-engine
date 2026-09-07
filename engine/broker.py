@@ -17,7 +17,9 @@ def enter_position(variant_id: str, symbol: str, price: float, starting_capital:
                     arm_cycle_id: str | None, leverage: float = 1.0) -> dict:
     margin = available_capital(variant_id, starting_capital)
     buying_power = margin * leverage
-    quantity = int(buying_power // price)
+    est_charges_pct = costs.estimate_buy_charge_pct()
+    effective_buying_power = buying_power / (1 + est_charges_pct)
+    quantity = int(effective_buying_power // price)
     if quantity <= 0:
         raise ValueError(f"Capital {margin:.2f} (leverage {leverage}x) insufficient to buy 1 share "
                           f"of {symbol} at {price:.2f}")

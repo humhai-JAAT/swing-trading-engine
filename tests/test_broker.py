@@ -20,7 +20,7 @@ class TestEnterPosition:
         result = broker.enter_position("bot_500/trailing_ema", "RELIANCE", 2500.0, 10000.0, "arm_1")
         assert result["symbol"] == "RELIANCE"
         assert result["entry_price"] == 2500.0
-        assert result["quantity"] == 4  # floor(10000/2500)
+        assert result["quantity"] == 3  # floor(effective_buying_power/2500) after charge deduction
         assert result["entry_charges"] > 0
 
     def test_insufficient_capital(self):

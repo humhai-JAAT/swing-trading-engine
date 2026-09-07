@@ -28,6 +28,21 @@ IST = pytz.timezone("Asia/Kolkata")
 
 _TRAIL_EXIT_REASON = {"ema": "EMA_TRAIL_EXIT", "atr": "ATR_TRAIL_EXIT"}
 
+SLIPPAGE_PCT = 0.05
+
+
+def _discard_incomplete_candle(df: pd.DataFrame) -> pd.DataFrame:
+    """Drop the last row if it belongs to a candle still forming (its hour
+    matches the current IST hour)."""
+    if df is None or df.empty:
+        return df
+    from datetime import datetime as _dt
+    now_ist = _dt.now(IST)
+    last_ts = df.index[-1]
+    if hasattr(last_ts, "hour") and last_ts.hour == now_ist.hour and last_ts.date() == now_ist.date():
+        return df.iloc[:-1]
+    return df
+
 
 def _timestamp_ist(time_str: str) -> pd.Timestamp:
     ts = pd.Timestamp(time_str)
@@ -122,10 +137,20 @@ def _decide_and_exit(variant_id: str, variant_cfg: dict, trade: dict, settings: 
 
     if not target_hit:
         for _, row in since_entry.iterrows():
-            if row["Low"] <= stop_price:
-                reason, exit_price = "STOP_LOSS", stop_price
+            sl_touched = row["Low"] <= stop_price
+            tgt_touched = row["High"] >= target_price
+            if sl_touched and tgt_touched:
+                # Conservative: if open <= stop, gap-down — SL hit first.
+                # Otherwise assume SL hit first (worst case for paper trading).
+                reason, exit_price = "STOP_LOSS", min(stop_price, row["Open"])
+                exit_price -= exit_price * SLIPPAGE_PCT / 100
                 break
-            if row["High"] >= target_price:
+            if sl_touched:
+                exit_price = min(stop_price, row["Open"])
+                exit_price -= exit_price * SLIPPAGE_PCT / 100
+                reason = "STOP_LOSS"
+                break
+            if tgt_touched:
                 target_hit = True
                 break
         if target_hit and reason is None:
@@ -134,6 +159,8 @@ def _decide_and_exit(variant_id: str, variant_cfg: dict, trade: dict, settings: 
     if reason is None and target_hit:
         df_1h = account.fetch_candles(symbol, interval="1h", period_days=CALENDAR_FETCH_DAYS)
         df_1h = trim_to_last_n_trading_days(df_1h, CANDLE_LOOKBACK_TRADING_DAYS)
+        if df_1h is not None and not df_1h.empty:
+            df_1h = _discard_incomplete_candle(df_1h)
         exit_style = variant_cfg["exit_style"]
         if exit_style == "ema":
             trail_price = check_ema9_trail_exit(df_1h)
@@ -141,7 +168,8 @@ def _decide_and_exit(variant_id: str, variant_cfg: dict, trade: dict, settings: 
             trail_price = check_atr_trail_exit(df_1h, peak, settings["atr_period"], settings["atr_multiplier"])
         if trail_price is not None:
             reason = _TRAIL_EXIT_REASON[exit_style]
-            exit_price = max(trail_price, target_price)
+            trail_with_slippage = trail_price - trail_price * SLIPPAGE_PCT / 100
+            exit_price = trail_with_slippage
 
     # No square-off — CNC carry-forward, positions hold until SL/target/trailing exit
 
