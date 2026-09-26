@@ -12,7 +12,7 @@ Both share a hard floor once trailing is active: exit price can never be below
 the original target level.
 """
 
-from datetime import datetime, time as dtime
+from datetime import datetime, time as dtime, timedelta
 
 import pandas as pd
 import pytz
@@ -31,15 +31,24 @@ _TRAIL_EXIT_REASON = {"ema": "EMA_TRAIL_EXIT", "atr": "ATR_TRAIL_EXIT"}
 SLIPPAGE_PCT = 0.05
 
 
-def _discard_incomplete_candle(df: pd.DataFrame) -> pd.DataFrame:
-    """Drop the last row if it belongs to a candle still forming (its hour
-    matches the current IST hour)."""
+SESSION_END = dtime(15, 30)
+
+
+def discard_incomplete_candle(df: pd.DataFrame) -> pd.DataFrame:
+    """Drop the last row if that candle has not closed yet.
+
+    Candles are stamped with their START time and NSE 1H candles begin at :15,
+    so the candle stamped H:15 closes at (H+1):15 — except the final 15:15 one,
+    which the session cuts short at 15:30. Comparing hours instead would leave a
+    forming candle in place between X:00 and X:15, when its hour no longer
+    matches the clock's.
+    """
     if df is None or df.empty:
         return df
-    from datetime import datetime as _dt
-    now_ist = _dt.now(IST)
     last_ts = df.index[-1]
-    if hasattr(last_ts, "hour") and last_ts.hour == now_ist.hour and last_ts.date() == now_ist.date():
+    closes_at = min(last_ts + timedelta(hours=1),
+                    last_ts.replace(hour=SESSION_END.hour, minute=SESSION_END.minute))
+    if datetime.now(IST) < closes_at:
         return df.iloc[:-1]
     return df
 
@@ -160,7 +169,7 @@ def _decide_and_exit(variant_id: str, variant_cfg: dict, trade: dict, settings: 
         df_1h = account.fetch_candles(symbol, interval="1h", period_days=CALENDAR_FETCH_DAYS)
         df_1h = trim_to_last_n_trading_days(df_1h, CANDLE_LOOKBACK_TRADING_DAYS)
         if df_1h is not None and not df_1h.empty:
-            df_1h = _discard_incomplete_candle(df_1h)
+            df_1h = discard_incomplete_candle(df_1h)
         exit_style = variant_cfg["exit_style"]
         if exit_style == "ema":
             trail_price = check_ema9_trail_exit(df_1h)

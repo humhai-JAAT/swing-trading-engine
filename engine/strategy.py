@@ -11,10 +11,14 @@ Pine reference (entry side):
                 entry fires — so only one entry per arm cycle.
     entryCondition = setupArmed and emaFast>emaSlow and macd>signal and
                      ema100>sma(ema100,9) and emaSepPct>=0.6 and flat
+
+The Pine has no "signal must be new on this candle" rule and no arm-cycle age
+limit, so neither is enforced here. `used_arm_cycles` is what implements Pine's
+"consumed on entry" — one entry per arm cycle. Callers must hand in candles
+whose last row is a CLOSED candle.
 """
 
 from dataclasses import dataclass
-from datetime import timedelta
 
 import pandas as pd
 
@@ -28,8 +32,6 @@ MACD_FAST, MACD_SLOW, MACD_SIGNAL = 12, 26, 9
 EMA_SEP_MIN_PCT = 0.6
 
 MIN_BARS_REQUIRED = TREND_EMA + TREND_SMA
-
-MAX_ARM_CYCLE_AGE_DAYS = 3
 
 
 def build_indicators(df: pd.DataFrame) -> pd.DataFrame:
@@ -89,14 +91,6 @@ def decide_entry(enriched: pd.DataFrame, used_arm_cycles: set[str] = frozenset()
 
     if not bool(last["entry_signal"]):
         return EntryCheck(False, last["arm_cycle_id"], close, "no_signal")
-
-    if len(enriched) > 1 and bool(enriched.iloc[-2]["entry_signal"]):
-        return EntryCheck(False, last["arm_cycle_id"], close, "signal_not_fresh")
-
-    if today is not None and pd.notna(last["arm_cycle_id"]):
-        age_days = (today.date() - pd.Timestamp(last["arm_cycle_id"]).date()).days
-        if age_days > MAX_ARM_CYCLE_AGE_DAYS:
-            return EntryCheck(False, last["arm_cycle_id"], close, "arm_cycle_stale")
 
     arm_id_str = str(last["arm_cycle_id"]) if pd.notna(last["arm_cycle_id"]) else None
     if arm_id_str is not None and arm_id_str in used_arm_cycles:

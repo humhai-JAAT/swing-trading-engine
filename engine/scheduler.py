@@ -152,7 +152,11 @@ def run_full_scan_cycle(settings: dict | None = None) -> dict:
             if freshness_warnings:
                 logger.warning(f"Data freshness: {freshness_warnings}")
 
-            indicator_cache = strategy.build_indicator_cache(stage2_result.candles_by_symbol)
+            closed_candles = {
+                symbol: variant_engine.discard_incomplete_candle(df)
+                for symbol, df in stage2_result.candles_by_symbol.items()
+            }
+            indicator_cache = strategy.build_indicator_cache(closed_candles)
 
             scan_results = {}
             for universe_bot in config.UNIVERSE_BOTS:
@@ -161,7 +165,7 @@ def run_full_scan_cycle(settings: dict | None = None) -> dict:
                     was_flat = db.get_open_trade(variant_id) is None
                     scan_results[variant_id] = variant_engine.scan_for_entry(
                         universe_bot["key"], variant_cfg, settings, now,
-                        top_lists[universe_bot["key"]], stage2_result.candles_by_symbol, was_flat,
+                        top_lists[universe_bot["key"]], closed_candles, was_flat,
                         indicator_cache=indicator_cache,
                     )
 

@@ -69,8 +69,7 @@ class TestDecideEntry:
         df = _make_candles(200)
         enriched = build_indicators(df)
         result = decide_entry(enriched)
-        assert result.reason in ("no_signal", "signal_not_fresh", "entry",
-                                  "arm_cycle_stale", "arm_cycle_already_used",
+        assert result.reason in ("no_signal", "entry", "arm_cycle_already_used",
                                   "insufficient_history")
 
     def test_arm_cycle_already_used(self):
