@@ -30,4 +30,4 @@ def atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
         (high - prev_close).abs(),
         (low - prev_close).abs(),
     ], axis=1).max(axis=1)
-    return tr.ewm(span=period, adjust=False).mean()
+    return tr.ewm(alpha=1 / period, adjust=False).mean()  # Wilder RMA, as TradingView ta.atr

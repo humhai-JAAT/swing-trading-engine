@@ -4,9 +4,8 @@ import os
 import tempfile
 
 import pytest
-import yaml
 
-from engine import config
+from engine import config, db
 
 
 class TestVariantStructure:
@@ -75,20 +74,24 @@ class TestDefaults:
         assert config.DEFAULTS["position_management_interval_minutes"] == 2
 
 
+@pytest.fixture
+def fresh_db(tmp_path, monkeypatch):
+    db._engine = None
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setattr(db, "_sqlite_path", lambda: tmp_path / "test.db")
+    db.init_db()
+    yield
+    db._engine = None
+
+
 class TestSettingsIO:
-    def test_load_defaults_when_no_file(self):
+    def test_load_defaults_when_nothing_saved(self, fresh_db):
         settings = config.load_settings()
         assert settings["starting_capital"] == 10000
-        assert settings["candle_interval"] == "1h"
+        assert settings["gainers_pool_size"] == 50
 
-    def test_save_and_load(self, tmp_path, monkeypatch):
-        settings_path = tmp_path / "settings.yaml"
-        monkeypatch.setattr(config, "SETTINGS_PATH", settings_path)
-
-        custom = {**config.DEFAULTS, "starting_capital": 50000}
-        config.save_settings(custom)
-        assert settings_path.exists()
-
+    def test_save_and_load_survive_via_db(self, fresh_db):
+        config.save_settings({**config.DEFAULTS, "starting_capital": 50000})
         loaded = config.load_settings()
         assert loaded["starting_capital"] == 50000
         assert loaded["candle_interval"] == "1h"

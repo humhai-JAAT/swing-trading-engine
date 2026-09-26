@@ -77,3 +77,21 @@ class TestUpdateExtremes:
         peak1, _ = broker.update_extremes("bot_500/trailing_atr", entry["trade_id"], 800.0, 800.0, 820.0, 790.0)
         peak2, _ = broker.update_extremes("bot_500/trailing_atr", entry["trade_id"], peak1, 790.0, 810.0, 795.0)
         assert peak2 == 820.0  # doesn't decrease
+
+
+class TestGrowwHourlyCandles:
+    def test_hours_start_at_0915_like_tradingview(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        from engine.broker_accounts import GrowwAccount
+
+        times = ["09:15", "09:30", "09:45", "10:00", "10:15"]
+        bars = [[f"2026-09-24T{t}:00", i, i + 1, i - 0.5, i + 0.5, 10, None] for i, t in enumerate(times)]
+        client = SimpleNamespace(get_historical_candles=lambda **kw: {"candles": bars})
+        acct = GrowwAccount("t", api_key="k", totp_secret="s")
+        with patch.object(acct, "_get_client", return_value=client):
+            df = acct.fetch_candles("TCS", "1h", 45)
+
+        assert [t.strftime("%H:%M") for t in df.index] == ["09:15", "10:15"]
+        first = df.iloc[0]
+        assert (first["Open"], first["High"], first["Low"], first["Close"], first["Volume"]) == (0, 4, -0.5, 3.5, 40)

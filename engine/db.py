@@ -48,23 +48,24 @@ _TRADES_TABLE_COLUMNS = """
     symbol TEXT NOT NULL,
     status TEXT NOT NULL CHECK(status IN ('OPEN', 'CLOSED')),
     entry_time TEXT NOT NULL,
-    entry_price REAL NOT NULL,
+    entry_price DOUBLE PRECISION NOT NULL,
     quantity INTEGER NOT NULL,
-    capital_used REAL NOT NULL,
-    leverage REAL NOT NULL DEFAULT 1.0,
-    entry_charges REAL NOT NULL,
+    capital_used DOUBLE PRECISION NOT NULL,
+    leverage DOUBLE PRECISION NOT NULL DEFAULT 1.0,
+    entry_charges DOUBLE PRECISION NOT NULL,
     arm_cycle_id TEXT,
-    peak_price REAL,
-    trough_price REAL,
+    peak_price DOUBLE PRECISION,
+    trough_price DOUBLE PRECISION,
     target_hit INTEGER NOT NULL DEFAULT 0,
+    target_hit_at TEXT,
     exit_time TEXT,
-    exit_price REAL,
+    exit_price DOUBLE PRECISION,
     exit_reason TEXT,
-    exit_charges REAL,
-    gross_pnl REAL,
-    total_charges REAL,
-    net_pnl REAL,
-    net_pnl_pct REAL,
+    exit_charges DOUBLE PRECISION,
+    gross_pnl DOUBLE PRECISION,
+    total_charges DOUBLE PRECISION,
+    net_pnl DOUBLE PRECISION,
+    net_pnl_pct DOUBLE PRECISION,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 """
@@ -182,6 +183,9 @@ def init_db() -> None:
             statement = statement.strip()
             if statement:
                 conn.execute(text(statement))
+        if engine.dialect.name == "postgresql":  # tables created before target_hit_at existed
+            for table in VARIANT_TABLES.values():
+                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS target_hit_at TEXT"))
 
 
 def open_trade(variant_id: str, symbol: str, entry_price: float, quantity: int, capital_used: float,
@@ -213,13 +217,13 @@ def update_price_extremes(variant_id: str, trade_id: int, peak_price: float, tro
         )
 
 
-def mark_target_hit(variant_id: str, trade_id: int) -> None:
+def mark_target_hit(variant_id: str, trade_id: int, hit_at: str) -> None:
     table = _table(variant_id)
     now = _now().isoformat()
     with get_engine().begin() as conn:
         conn.execute(
-            text(f"UPDATE {table} SET target_hit=1, updated_at=:now WHERE id=:id"),
-            {"now": now, "id": trade_id},
+            text(f"UPDATE {table} SET target_hit=1, target_hit_at=:hit_at, updated_at=:now WHERE id=:id"),
+            {"hit_at": hit_at, "now": now, "id": trade_id},
         )
 
 

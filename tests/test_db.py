@@ -100,10 +100,11 @@ class TestTradeLifecycle:
     def test_mark_target_hit(self):
         variant_id = "bot_500/trailing_ema"
         trade_id = db.open_trade(variant_id, "HDFC", 1600.0, 5, 8000.0, 11.0, None)
-        db.mark_target_hit(variant_id, trade_id)
+        db.mark_target_hit(variant_id, trade_id, "2026-09-25T10:30:00+05:30")
 
         trade = db.get_open_trade(variant_id)
         assert trade["target_hit"] == 1
+        assert trade["target_hit_at"] == "2026-09-25T10:30:00+05:30"
 
     def test_update_price_extremes(self):
         variant_id = "bot_500/trailing_ema"

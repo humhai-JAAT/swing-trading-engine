@@ -54,13 +54,13 @@ def fetch_ranking_data(symbols: list[str], fallback_accounts: list[BrokerAccount
                         primary_accounts: list[BrokerAccount] | None = None) -> Stage1Result:
     accounts = get_configured_accounts()
     if primary_accounts is None:
-        primary_accounts = accounts["groww"] or accounts["angelone"]
+        primary_accounts = accounts["angelone"]  # Groww get_ohlc has no previous close to rank by
     if fallback_accounts is None:
         fallback_accounts = accounts["angelone"]
 
     if not primary_accounts:
         return Stage1Result(rank_list=pd.DataFrame(columns=["symbol", "last_price", "pct_change"]),
-                             warnings=["No broker accounts configured for Stage 1 ranking fetch."])
+                             warnings=["No Angel One account configured — Stage 1 needs Angel One quotes for the day % change."])
 
     workers = _build_workers(primary_accounts)
     chunks = _chunk(symbols, len(workers))

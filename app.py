@@ -36,6 +36,15 @@ IST = pytz.timezone("Asia/Kolkata")
 db.init_db()
 settings = config.load_settings()
 
+
+@st.cache_resource  # runs once per server process, i.e. after every restart or redeploy
+def _autostart_scheduler() -> None:
+    if db.get_setting("scheduler_stopped") != "1":
+        scheduler.start_scheduler()
+
+
+_autostart_scheduler()
+
 st.title("📈 Swing Trading Engine")
 st.caption(
     "1 universe-bot (full Nifty500) x 2 variants (EMA9 trailing / ATR trailing exit) = "
@@ -51,9 +60,11 @@ st.sidebar.markdown(f"**Scheduler:** {'Running' if running else 'Stopped'}")
 
 col_a, col_b = st.sidebar.columns(2)
 if col_a.button("Start", use_container_width=True, disabled=running):
+    db.set_setting("scheduler_stopped", "0")
     scheduler.start_scheduler()
     st.rerun()
 if col_b.button("Stop", use_container_width=True, disabled=not running):
+    db.set_setting("scheduler_stopped", "1")
     scheduler.stop_scheduler()
     st.rerun()
 

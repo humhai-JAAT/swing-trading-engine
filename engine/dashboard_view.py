@@ -201,8 +201,9 @@ def render_variant_panel(universe_bot_key: str, variant_cfg: dict, settings: dic
     st.markdown(f"### {universe_label} — {exit_label}")
     st.caption(
         f"**{exit_label}** exit (activates once price crosses the "
-        f"{settings['profit_target_pct']:.1f}% fixed target — stop-loss is fixed at "
-        f"{settings['stop_loss_pct']:.1f}% throughout) · CNC carry-forward, no intraday square-off"
+        f"{settings['profit_target_pct']:.1f}% fixed target — stop-loss "
+        f"{settings['stop_loss_pct']:.1f}% until then, after which the target level is a hard floor) "
+        f"· CNC carry-forward, no intraday square-off"
     )
 
     m1, m2 = st.columns(2)
@@ -223,16 +224,17 @@ def render_variant_panel(universe_bot_key: str, variant_cfg: dict, settings: dic
     if not trade:
         st.info("No open position — scanning for a fresh entry signal at the next 1H candle close.")
     else:
-        current_price = trade["entry_price"]
+        live_price = None
         accounts = get_configured_accounts()
         pool = accounts["groww"] or accounts["angelone"]
         if pool:
             try:
                 quotes = pool[0].fetch_quotes_batch([trade["symbol"]])
                 if quotes:
-                    current_price = quotes[0].last_price
+                    live_price = quotes[0].last_price
             except Exception:
                 pass
+        current_price = live_price or trade["entry_price"]
 
         unrealized_pnl = (current_price - trade["entry_price"]) * trade["quantity"]
         unrealized_pct = unrealized_pnl / trade["capital_used"] * 100 if trade["capital_used"] else 0.0
@@ -261,10 +263,12 @@ def render_variant_panel(universe_bot_key: str, variant_cfg: dict, settings: dic
         )
 
         if show_force_exit:
-            if st.button(f"Force Exit {trade['symbol']}", key=f"force_exit_{variant_id}"):
+            if st.button(f"Force Exit {trade['symbol']}", key=f"force_exit_{variant_id}",
+                         disabled=live_price is None, help="Needs a live price to exit at."):
                 from engine import broker
-                result = broker.exit_position(variant_id, trade["id"], trade["quantity"],
-                                                trade["entry_price"], "MANUAL_EXIT")
+                with db.acquire_trade_lock(variant_id):  # the scheduler may be closing it right now
+                    if (db.get_open_trade(variant_id) or {}).get("id") == trade["id"]:
+                        broker.exit_position(variant_id, trade["id"], trade["quantity"], live_price, "MANUAL_EXIT")
                 st.warning(f"Force exited {trade['symbol']}")
                 st.rerun()
 

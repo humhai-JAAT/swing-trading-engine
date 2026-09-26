@@ -116,3 +116,111 @@ class TestScanForEntryStructure:
         from engine import config
         for v in config.VARIANTS:
             assert "entry_timing" not in v
+
+
+# ---- candle close time, exits after the target, entry edge cases ----
+from datetime import datetime
+from unittest.mock import patch
+
+import pytz
+
+from engine import config, db, strategy
+from engine.variant_engine import (SLIPPAGE_PCT, _decide_and_exit, candle_closes_at,
+                                   discard_incomplete_candle, scan_for_entry)
+
+IST = pytz.timezone("Asia/Kolkata")
+V = "bot_500/trailing_ema"
+
+
+def _ist(*args):
+    return IST.localize(datetime(*args))
+
+
+@pytest.fixture
+def fresh_db(tmp_path, monkeypatch):
+    db._engine = None
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setattr(db, "_sqlite_path", lambda: tmp_path / "test.db")
+    db.init_db()
+    yield
+    db._engine = None
+
+
+class TestCandleClose:
+    def test_forming_candle_dropped_between_x00_and_x15(self):
+        idx = pd.DatetimeIndex([_ist(2026, 9, 24, 9, 15), _ist(2026, 9, 24, 10, 15)])
+        df = pd.DataFrame({"Close": [1.0, 2.0]}, index=idx)
+        with patch("engine.variant_engine.datetime") as clock:
+            clock.now.return_value = _ist(2026, 9, 24, 11, 0)
+            assert discard_incomplete_candle(df).index[-1] == idx[0]
+
+    def test_last_candle_of_the_day_closes_at_1530(self):
+        assert candle_closes_at(pd.Timestamp(_ist(2026, 9, 24, 15, 15))) == _ist(2026, 9, 24, 15, 30)
+
+
+class _Account:
+    def __init__(self, df_1h=None):
+        self.df_1h = df_1h
+
+    def fetch_candles(self, *args, **kwargs):
+        return self.df_1h
+
+
+def _open_trade(minute_bars):
+    """Entry 100 x 10 on Rs 1000 capital: target 103, stop 98.5. Bars are (open, high, low, close)."""
+    db.open_trade(V, "TEST", 100.0, 10, 1000.0, 1.0, None)
+    trade = {**db.get_open_trade(V), "entry_time": "2026-09-24T10:17:00+05:30"}
+    idx = pd.date_range(_ist(2026, 9, 24, 10, 18), periods=len(minute_bars), freq="1min")
+    return trade, pd.DataFrame(minute_bars, columns=["Open", "High", "Low", "Close"], index=idx)
+
+
+def _falling_1h(last_start):
+    idx = pd.date_range(end=last_start, periods=20, freq="1h")
+    close = np.linspace(120, 100, 20)
+    return pd.DataFrame({"Open": close, "High": close + 1, "Low": close - 1, "Close": close}, index=idx)
+
+
+class TestExitAfterTarget:
+    def test_dip_below_target_exits_at_the_floor(self, fresh_db):
+        trade, df = _open_trade([(100, 103.5, 101, 103.2), (103.2, 103.4, 102.5, 102.6)])
+        r = _decide_and_exit(V, config.VARIANTS[0], trade, config.DEFAULTS, None, _Account(), "TEST", df)
+        assert r["reason"] == "TARGET_FLOOR"
+        assert r["price"] == pytest.approx(103.0 * (1 - SLIPPAGE_PCT / 100))
+
+    def test_candle_that_closed_before_the_touch_does_not_trail(self, fresh_db):
+        trade, df = _open_trade([(100, 103.5, 101, 103.2), (103.2, 104.2, 103.1, 104.0)])
+        r = _decide_and_exit(V, config.VARIANTS[0], trade, config.DEFAULTS, None,
+                             _Account(_falling_1h(_ist(2026, 9, 24, 9, 15))), "TEST", df)
+        assert r["action"] == "hold"
+
+    def test_trail_exit_fills_at_current_price_not_candle_close(self, fresh_db):
+        trade, df = _open_trade([(100, 103.5, 101, 103.2), (103.2, 104.2, 103.1, 104.0)])
+        r = _decide_and_exit(V, config.VARIANTS[0], trade, config.DEFAULTS, None,
+                             _Account(_falling_1h(_ist(2026, 9, 24, 10, 15))), "TEST", df)
+        assert r["reason"] == "EMA_TRAIL_EXIT"
+        assert r["price"] == pytest.approx(104.0 * (1 - SLIPPAGE_PCT / 100))
+
+
+class TestEntryEdgeCases:
+    def _scan(self, candle_start, signals, now, session_opens=None):
+        top = pd.DataFrame({"symbol": list(signals)})
+        candles = {s: pd.DataFrame({"Close": [1.0]}, index=pd.DatetimeIndex([candle_start])) for s in signals}
+        with patch.object(strategy, "decide_entry", side_effect=lambda enriched, **kw: signals[enriched]):
+            return scan_for_entry("bot_500", config.VARIANTS[0], config.DEFAULTS, now, top, candles, True,
+                                  indicator_cache={s: s for s in signals}, session_opens=session_opens)
+
+    def test_unaffordable_signal_is_skipped_for_the_next_one(self, fresh_db):
+        arm = pd.Timestamp(_ist(2026, 9, 25, 10, 15))
+        signals = {"MRF": strategy.EntryCheck(True, arm, 130000.0, "entry"),
+                   "TCS": strategy.EntryCheck(True, arm, 3000.0, "entry")}
+        r = self._scan(_ist(2026, 9, 25, 10, 15), signals, _ist(2026, 9, 25, 11, 16))
+        assert r["entered"]["symbol"] == "TCS"
+        assert r["candidates"][0]["reason"].startswith("unaffordable")
+
+    def test_previous_session_signal_fills_at_todays_open(self, fresh_db):
+        arm = pd.Timestamp(_ist(2026, 9, 24, 11, 15))
+        signals = {"TCS": strategy.EntryCheck(True, arm, 3000.0, "entry")}
+        yesterday_last, morning = _ist(2026, 9, 24, 15, 15), _ist(2026, 9, 25, 9, 16)
+        assert self._scan(yesterday_last, signals, morning)["candidates"][0]["reason"] == "no_session_open"
+        r = self._scan(yesterday_last, signals, morning, session_opens={"TCS": 3050.0})
+        assert r["entered"]["entry_price"] == 3050.0

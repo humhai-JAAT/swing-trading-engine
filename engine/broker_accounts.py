@@ -10,6 +10,7 @@ import os
 import threading
 import time
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 
 import pandas as pd
@@ -411,16 +412,10 @@ class GrowwAccount(BrokerAccount):
                     close_price = ohlc.get("close")
                     if close_price is None:
                         continue
-                    prev_close = ohlc.get("previousClose") or ohlc.get("prev_close")
-                    if prev_close:
-                        pct_change = (close_price - prev_close) / prev_close * 100
-                    else:
-                        open_price = ohlc.get("open")
-                        if not open_price:
-                            continue
-                        pct_change = (close_price - open_price) / open_price * 100
+                    # get_ohlc has no previous close, so there is no day % change here —
+                    # Stage 1 ranks with Angel One; this only serves last_price.
                     results.append(QuoteResult(symbol=symbol, last_price=float(close_price),
-                                                pct_change=float(pct_change)))
+                                                pct_change=float("nan")))
             except Exception as e:
                 logger.warning(f"[{self.account_id}] Groww OHLC batch failed: {e}")
                 continue
@@ -433,7 +428,7 @@ class GrowwAccount(BrokerAccount):
         now = pd.Timestamp.now(tz=IST)
         from_dt = now - pd.Timedelta(days=period_days)
         groww_interval = {"1m": "1minute", "5m": "5minute", "15m": "15minute",
-                           "1h": "1hour", "1d": "1day"}.get(interval)
+                           "1h": "15minute", "1d": "1day"}.get(interval)
         if groww_interval is None:
             return None
 
@@ -455,6 +450,10 @@ class GrowwAccount(BrokerAccount):
             df["Datetime"] = pd.to_datetime(df["Datetime"])
             df = df.set_index("Datetime")
             df.index = df.index.tz_localize(IST) if df.index.tz is None else df.index.tz_convert(IST)
+            if interval == "1h":  # Groww hours are clock-aligned; NSE/TradingView hours start at 09:15
+                df = df.resample("60min", offset="15min").agg(
+                    {"Open": "first", "High": "max", "Low": "min", "Close": "last", "Volume": "sum"}
+                ).dropna(subset=["Open"])
             return df
         except Exception as e:
             logger.warning(f"[{self.account_id}] Groww candle fetch failed for {symbol}: {e}")
@@ -465,6 +464,7 @@ def _env(prefix: str, suffix: str) -> str | None:
     return os.environ.get(f"{prefix}_{suffix}")
 
 
+@lru_cache(maxsize=None)  # a fresh AngelOneAccount logs in again, so build them once per process
 def get_configured_accounts() -> dict[str, list[BrokerAccount]]:
     angelone_accounts = []
     for n in (1, 2):

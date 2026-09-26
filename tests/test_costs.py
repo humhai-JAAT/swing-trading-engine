@@ -47,14 +47,13 @@ class TestCNCCharges:
 
     def test_total_charges_sell(self):
         result = calc_charges(100000, "sell")
-        expected = (result.brokerage + result.stt + result.stamp_duty +
-                    result.exchange_charge + result.sebi_charge + result.ipft_charge + result.gst)
+        expected = (result.brokerage + result.stt + result.stamp_duty + result.exchange_charge +
+                    result.sebi_charge + result.ipft_charge + result.dp_charge + result.gst)
         assert result.total == pytest.approx(expected, abs=0.01)
 
-    def test_buy_more_expensive_than_sell(self):
-        buy = calc_charges(100000, "buy")
-        sell = calc_charges(100000, "sell")
-        assert buy.total > sell.total
+    def test_dp_charge_only_on_sell(self):
+        assert calc_charges(100000, "sell").dp_charge == 20.0
+        assert calc_charges(100000, "buy").dp_charge == 0.0
 
     def test_cnc_stt_much_higher_than_zero(self):
         result = calc_charges(100000, "buy")

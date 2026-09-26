@@ -8,7 +8,8 @@ NSE/SEBI statutory rates for delivery equity:
   Exchange transaction charge (NSE): 0.00297% on both legs.
   SEBI turnover charge:              0.0001% on both legs.
   IPFT (NSE):                        0.0001% on both legs.
-  GST:                               18% on (brokerage + exchange + SEBI + IPFT).
+  DP charge (Groww + CDSL):          Rs 20 per scrip on every delivery sell.
+  GST:                               18% on (brokerage + exchange + SEBI + IPFT + DP).
 """
 
 from dataclasses import dataclass
@@ -23,6 +24,7 @@ STAMP_BUY_PCT = 0.00015
 EXCHANGE_PCT = 0.0000297
 SEBI_PCT = 0.000001
 IPFT_PCT = 0.000001
+DP_SELL = 20.0
 GST_RATE = 0.18
 
 
@@ -35,13 +37,14 @@ class ChargeBreakdown:
     exchange_charge: float
     sebi_charge: float
     ipft_charge: float
+    dp_charge: float
     gst: float
     total: float
 
 
 def calc_charges(order_value: float, side: str) -> ChargeBreakdown:
     if order_value <= 0:
-        return ChargeBreakdown(order_value, 0, 0, 0, 0, 0, 0, 0, 0)
+        return ChargeBreakdown(order_value, 0, 0, 0, 0, 0, 0, 0, 0, 0)
 
     brokerage = min(BROKERAGE_CAP, order_value * BROKERAGE_PCT)
     if brokerage < BROKERAGE_MIN:
@@ -52,14 +55,15 @@ def calc_charges(order_value: float, side: str) -> ChargeBreakdown:
     exchange_charge = order_value * EXCHANGE_PCT
     sebi_charge = order_value * SEBI_PCT
     ipft_charge = order_value * IPFT_PCT
-    gst = GST_RATE * (brokerage + exchange_charge + sebi_charge + ipft_charge)
+    dp_charge = DP_SELL if side == "sell" else 0.0
+    gst = GST_RATE * (brokerage + exchange_charge + sebi_charge + ipft_charge + dp_charge)
 
-    total = brokerage + stt + stamp_duty + exchange_charge + sebi_charge + ipft_charge + gst
+    total = brokerage + stt + stamp_duty + exchange_charge + sebi_charge + ipft_charge + dp_charge + gst
 
     return ChargeBreakdown(
         order_value=order_value, brokerage=brokerage, stt=stt, stamp_duty=stamp_duty,
         exchange_charge=exchange_charge, sebi_charge=sebi_charge, ipft_charge=ipft_charge,
-        gst=gst, total=total,
+        dp_charge=dp_charge, gst=gst, total=total,
     )
 
 

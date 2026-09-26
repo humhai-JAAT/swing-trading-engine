@@ -80,8 +80,7 @@ class EntryCheck:
     reason: str
 
 
-def decide_entry(enriched: pd.DataFrame, used_arm_cycles: set[str] = frozenset(),
-                  today: "pd.Timestamp | None" = None) -> EntryCheck:
+def decide_entry(enriched: pd.DataFrame, used_arm_cycles: set[str] = frozenset()) -> EntryCheck:
     if len(enriched) < MIN_BARS_REQUIRED:
         return EntryCheck(False, None, float(enriched["Close"].iloc[-1]) if len(enriched) else 0.0,
                            "insufficient_history")
@@ -107,8 +106,7 @@ def build_indicator_cache(candles_by_symbol: dict[str, pd.DataFrame]) -> dict[st
     }
 
 
-def check_entry(df: pd.DataFrame, used_arm_cycles: set[str] = frozenset(),
-                 today: "pd.Timestamp | None" = None) -> EntryCheck:
+def check_entry(df: pd.DataFrame, used_arm_cycles: set[str] = frozenset()) -> EntryCheck:
     if len(df) < MIN_BARS_REQUIRED:
         return EntryCheck(False, None, float(df["Close"].iloc[-1]) if len(df) else 0.0, "insufficient_history")
-    return decide_entry(build_indicators(df), used_arm_cycles, today)
+    return decide_entry(build_indicators(df), used_arm_cycles)

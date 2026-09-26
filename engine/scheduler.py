@@ -4,8 +4,9 @@
      default 2) — manages any of the 2 variants' open positions.
   2. Entry scanning (Stage 1 + Stage 2 + both variants' scan_for_entry),
      aligned to 1H candle boundaries with a 1-min safety offset — fires at
-     10:16, 11:16, 12:16, 13:16, 14:16, 15:16 (1 min after each hourly candle
-     close at X:15, market opens at 09:15, last candle 14:15-15:15).
+     09:16-15:16 on weekdays (1 min after each hourly candle close at X:15).
+     The 09:16 run checks the previous session's 15:15-15:30 candle, which
+     the rules fill at today's open.
 
 No subh30 checkpoint concept. CNC carry-forward — no intraday square-off.
 """
@@ -61,7 +62,6 @@ def is_awake(settings: dict, now: datetime) -> bool:
 
 def run_position_management_cycle(settings: dict | None = None) -> dict:
     settings = settings or config.load_settings()
-    db.init_db()
     now = _now_ist()
 
     if market_status(now) != "open":
@@ -69,6 +69,7 @@ def run_position_management_cycle(settings: dict | None = None) -> dict:
 
     try:
         results = {}
+        minute_data = {}  # both variants usually hold the same stock: fetch its 1-minute bars once
         for universe_bot in config.UNIVERSE_BOTS:
             for variant_cfg in config.VARIANTS:
                 variant_id = f"{universe_bot['key']}/{variant_cfg['key']}"
@@ -76,8 +77,10 @@ def run_position_management_cycle(settings: dict | None = None) -> dict:
                 if not trade:
                     continue
                 try:
+                    if trade["symbol"] not in minute_data:
+                        minute_data[trade["symbol"]] = variant_engine.fetch_minute_candles(trade["symbol"])
                     results[variant_id] = variant_engine.manage_open_position(
-                        variant_id, variant_cfg, trade, settings, now
+                        variant_id, variant_cfg, trade, settings, now, minute_data[trade["symbol"]]
                     )
                 except Exception as e:
                     logger.error(f"Position management for {variant_id} crashed: {e}")
@@ -100,7 +103,6 @@ def run_position_management_cycle(settings: dict | None = None) -> dict:
 
 def run_full_scan_cycle(settings: dict | None = None) -> dict:
     settings = settings or config.load_settings()
-    db.init_db()
     db.prune_cycle_logs(retention_days=7)
     now = _now_ist()
 
@@ -157,6 +159,11 @@ def run_full_scan_cycle(settings: dict | None = None) -> dict:
                 for symbol, df in stage2_result.candles_by_symbol.items()
             }
             indicator_cache = strategy.build_indicator_cache(closed_candles)
+            session_opens = {
+                symbol: float(df["Open"][df.index.date == now.date()].iloc[0])
+                for symbol, df in stage2_result.candles_by_symbol.items()
+                if (df.index.date == now.date()).any()
+            }
 
             scan_results = {}
             for universe_bot in config.UNIVERSE_BOTS:
@@ -166,7 +173,7 @@ def run_full_scan_cycle(settings: dict | None = None) -> dict:
                     scan_results[variant_id] = variant_engine.scan_for_entry(
                         universe_bot["key"], variant_cfg, settings, now,
                         top_lists[universe_bot["key"]], closed_candles, was_flat,
-                        indicator_cache=indicator_cache,
+                        indicator_cache=indicator_cache, session_opens=session_opens,
                     )
 
             strategy_warnings = [
@@ -269,11 +276,9 @@ def start_scheduler() -> None:
         next_run_time=datetime.now(IST),
     )
 
-    # 1H candle boundary aligned: fires at :16 past hours 10-15 (1 min after
-    # each 1H candle close at X:15, market opens at 09:15, last candle 14:15-15:15).
     scheduler.add_job(
         _scan_job,
-        trigger=CronTrigger(hour="10,11,12,13,14,15", minute="16", timezone="Asia/Kolkata"),
+        trigger=CronTrigger(day_of_week="mon-fri", hour="9-15", minute="16", timezone="Asia/Kolkata"),
         id=SCAN_JOB_ID, replace_existing=True,
     )
 
@@ -283,7 +288,7 @@ def start_scheduler() -> None:
     live_feed_started = live_feed.start()
 
     logger.info(f"Scheduler started: position management every {position_minutes} min, "
-                f"entry scan at 1H-boundary+1 offsets (10:16-15:16), "
+                f"entry scan at 1H-boundary+1 offsets (09:16-15:16, Mon-Fri), "
                 f"live-feed tick-driven exits {'ON' if live_feed_started else 'OFF (no Groww account)'}")
 
 

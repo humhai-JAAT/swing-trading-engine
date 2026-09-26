@@ -4,11 +4,9 @@ trailing_atr). Adapted from the unified trading engine's multi-universe,
 multi-variant intraday design.
 """
 
-import yaml
+import json
 
-from common.helpers import PROJECT_ROOT
-
-SETTINGS_PATH = PROJECT_ROOT / "config" / "settings.yaml"
+SETTINGS_KEY = "strategy_settings"
 
 UNIVERSE_BOTS = [
     {"key": "bot_500", "label": "Bot 500 - Full Nifty500", "universe": "nifty500"},
@@ -34,7 +32,7 @@ DEFAULTS = {
     "stop_loss_pct": 1.5,
     "wake_time": "09:00",
     "sleep_time": "16:00",
-    "gainers_pool_size": 30,
+    "gainers_pool_size": 50,
     "scan_interval_minutes": 60,
     "position_management_interval_minutes": 2,
     "atr_period": 14,
@@ -47,14 +45,11 @@ DEFAULTS = {
 
 
 def load_settings() -> dict:
-    if not SETTINGS_PATH.exists():
-        return dict(DEFAULTS)
-    with open(SETTINGS_PATH, "r", encoding="utf-8") as f:
-        cfg = yaml.safe_load(f) or {}
-    return {**DEFAULTS, **cfg}
+    from engine import db  # db imports config at module level
+    saved = db.get_setting(SETTINGS_KEY)
+    return {**DEFAULTS, **(json.loads(saved) if saved else {})}
 
 
 def save_settings(settings: dict) -> None:
-    SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with open(SETTINGS_PATH, "w", encoding="utf-8") as f:
-        yaml.safe_dump(settings, f, sort_keys=False, default_flow_style=False)
+    from engine import db
+    db.set_setting(SETTINGS_KEY, json.dumps(settings))
