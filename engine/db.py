@@ -121,8 +121,8 @@ def get_engine() -> Engine:
 
     database_url = os.environ.get("DATABASE_URL")
     if database_url:
-        if database_url.startswith("postgres://"):
-            database_url = database_url.replace("postgres://", "postgresql://", 1)
+        # name the driver requirements.txt ships: SQLAlchemy 2.1 made psycopg 3 the default
+        database_url = re.sub(r"^postgres(ql)?://", "postgresql+psycopg2://", database_url)
         _engine = create_engine(database_url, pool_pre_ping=True)
         logger.info(f"Using {_engine.dialect.name} database (DATABASE_URL set)")
     else:
