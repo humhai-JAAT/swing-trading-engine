@@ -1,7 +1,7 @@
 """Swing Trading Engine — Streamlit dashboard (admin, full controls).
 
-1 universe-bot (bot_500 — full Nifty500) x 2 variants (trailing_ema /
-trailing_atr) = 2 total, all scanning/trading independently in the background.
+1 universe-bot (bot_500 — full Nifty500) x 3 variants (trailing_ema /
+trailing_atr / ema30_15m) = 3 total, all scanning/trading independently in the background.
 1H candle evaluation at each hourly close. CNC carry-forward, no square-off.
 """
 
@@ -47,8 +47,8 @@ _autostart_scheduler()
 
 st.title("📈 Swing Trading Engine")
 st.caption(
-    "1 universe-bot (full Nifty500) x 2 variants (EMA9 trailing / ATR trailing exit) = "
-    "2 independent paper-trading strategies on 1H candles, CNC carry-forward (no intraday "
+    "1 universe-bot (full Nifty500) x 3 variants (EMA9 trailing / ATR trailing / EMA30-15m exit) = "
+    "3 independent paper-trading strategies sharing one 1H entry, CNC carry-forward (no intraday "
     "square-off). Shares one deduplicated ranking + candle-data fetch per cycle."
 )
 
@@ -105,7 +105,7 @@ variant_key = st.sidebar.radio(
 )
 variant_cfg = config.VARIANTS_BY_KEY[variant_key]
 universe_bot_key = config.UNIVERSE_BOTS[0]["key"]
-st.sidebar.caption("Both variants keep scanning/trading independently regardless of which one you're viewing.")
+st.sidebar.caption("All variants keep scanning/trading independently regardless of which one you're viewing.")
 
 st.sidebar.divider()
 st.sidebar.markdown("### Public Viewer")
@@ -164,7 +164,7 @@ with st.sidebar.expander("Strategy Settings", expanded=False):
 
 st.sidebar.divider()
 with st.sidebar.expander("Danger Zone", expanded=False):
-    st.caption("Permanently deletes ALL trades and cycle logs for both variants. Cannot be undone.")
+    st.caption("Permanently deletes ALL trades and cycle logs for all variants. Cannot be undone.")
     confirm_reset = st.checkbox("I understand this deletes everything", key="confirm_reset")
     if st.button("Reset All Data", type="secondary", disabled=not confirm_reset, use_container_width=True):
         db.reset_all_data()
@@ -190,7 +190,7 @@ live_panel()
 
 st.divider()
 st.subheader("Variant Scoreboard")
-st.caption("Both variants compared side by side.")
+st.caption("All variants compared side by side.")
 
 
 @st.fragment(run_every=dashboard_view.get_refresh_interval())

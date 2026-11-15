@@ -17,16 +17,23 @@ class TestVariantStructure:
         assert config.UNIVERSE_BOTS[0]["universe"] == "nifty500"
 
     def test_variants_count(self):
-        assert len(config.VARIANTS) == 2
+        assert len(config.VARIANTS) == 3
 
     def test_variant_keys(self):
         keys = [v["key"] for v in config.VARIANTS]
         assert "trailing_ema" in keys
         assert "trailing_atr" in keys
+        assert "ema30_15m" in keys
 
     def test_variant_exit_styles(self):
         for v in config.VARIANTS:
-            assert v["exit_style"] in ("ema", "atr")
+            assert v["exit_style"] in ("ema", "atr", "ema30_15m")
+
+    def test_variant_capital_override_and_default(self):
+        settings = {**config.DEFAULTS, "starting_capital": 10000}
+        assert config.variant_capital({"key": "x", "exit_style": "ema", "starting_capital": 25000}, settings) == 25000
+        for v in config.VARIANTS:  # all three share the setting since 2026-11-15
+            assert config.variant_capital(v, settings) == 10000
 
     def test_no_entry_timing_field(self):
         for v in config.VARIANTS:
@@ -34,9 +41,10 @@ class TestVariantStructure:
 
     def test_all_variant_ids(self):
         ids = config.all_variant_ids()
-        assert len(ids) == 2
+        assert len(ids) == 3
         assert "bot_500/trailing_ema" in ids
         assert "bot_500/trailing_atr" in ids
+        assert "bot_500/ema30_15m" in ids
 
     def test_variants_by_key(self):
         assert "trailing_ema" in config.VARIANTS_BY_KEY
@@ -62,7 +70,7 @@ class TestDefaults:
         assert config.DEFAULTS["candle_lookback_trading_days"] == 25
 
     def test_starting_capital(self):
-        assert config.DEFAULTS["starting_capital"] == 10000
+        assert config.DEFAULTS["starting_capital"] == 50000
 
     def test_profit_target(self):
         assert config.DEFAULTS["profit_target_pct"] == 3.0
@@ -87,7 +95,7 @@ def fresh_db(tmp_path, monkeypatch):
 class TestSettingsIO:
     def test_load_defaults_when_nothing_saved(self, fresh_db):
         settings = config.load_settings()
-        assert settings["starting_capital"] == 10000
+        assert settings["starting_capital"] == 50000
         assert settings["gainers_pool_size"] == 50
 
     def test_save_and_load_survive_via_db(self, fresh_db):

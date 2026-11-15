@@ -12,10 +12,17 @@ Pine reference (entry side):
     entryCondition = setupArmed and emaFast>emaSlow and macd>signal and
                      ema100>sma(ema100,9) and emaSepPct>=0.6 and flat
 
-The Pine has no "signal must be new on this candle" rule and no arm-cycle age
-limit, so neither is enforced here. `used_arm_cycles` is what implements Pine's
-"consumed on entry" — one entry per arm cycle. Callers must hand in candles
-whose last row is a CLOSED candle.
+The Pine has no arm-cycle age limit, so none is enforced. `used_arm_cycles` is
+what implements Pine's "consumed on entry" — one entry per arm cycle.
+
+Freshness (added 2026-11-13 after live trades kept entering late, near tops): an
+entry fires only on the candle on which `entry_signal` turned True, i.e. when
+`signal_onset_id` equals that candle's own timestamp. Pine needs no such rule —
+it is flat-and-watching on every bar, so it always fires on the first qualifying
+bar. This bot scans once an hour and may be busy in another position, so without
+the rule any later bar of a multi-bar True stretch counted as a signal. A
+dip-and-return (signal off, then on again) is a new onset and counts as fresh.
+Callers must hand in candles whose last row is a CLOSED candle.
 """
 
 from dataclasses import dataclass
@@ -69,7 +76,21 @@ def build_indicators(df: pd.DataFrame) -> pd.DataFrame:
         out["armed"] & (out["ema_fast"] > out["ema_slow"]) & out["macd_bullish"]
         & out["trend_bullish"] & out["ema_sep_ok"]
     )
+    out["signal_onset_id"] = signal_onset_ids(out["entry_signal"])
     return out
+
+
+def signal_onset_ids(entry_signal: pd.Series) -> pd.Series:
+    """Timestamp of the bar on which the current run of `entry_signal` turned on.
+
+    Stamped once when the signal rises (False -> True), carried unchanged while it
+    stays True, NaT while it is False; a later rise is a new onset. Comparing it
+    with a bar's own timestamp answers "did the signal become true on THIS bar".
+    """
+    rising = entry_signal & ~entry_signal.shift(1, fill_value=False)
+    onset = pd.Series(pd.NaT, index=entry_signal.index, dtype=entry_signal.index.dtype)
+    onset[rising] = entry_signal.index[rising]
+    return onset.ffill().where(entry_signal)
 
 
 @dataclass
@@ -90,6 +111,10 @@ def decide_entry(enriched: pd.DataFrame, used_arm_cycles: set[str] = frozenset()
 
     if not bool(last["entry_signal"]):
         return EntryCheck(False, last["arm_cycle_id"], close, "no_signal")
+
+    # Fresh = the signal turned on with THIS closed candle (see module docstring).
+    if last["signal_onset_id"] != enriched.index[-1]:
+        return EntryCheck(False, last["arm_cycle_id"], close, "signal_not_fresh")
 
     arm_id_str = str(last["arm_cycle_id"]) if pd.notna(last["arm_cycle_id"]) else None
     if arm_id_str is not None and arm_id_str in used_arm_cycles:

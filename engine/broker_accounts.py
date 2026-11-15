@@ -392,32 +392,30 @@ class GrowwAccount(BrokerAccount):
         return dict(zip(eq["trading_symbol"], eq["exchange_token"].astype(str)))
 
     def fetch_quotes_batch(self, symbols: list[str]) -> list[QuoteResult]:
+        # get_ohlc's "close" is the PREVIOUS session's close, not the live price
+        # (verified 2026-11-13: GODREJIND ohlc.close 968.95 vs last_price 1084.10),
+        # which made the dashboard's Current/Unrealized P&L and Force Exit wrong.
+        # get_quote carries the real LTP and day change, one symbol per call.
+        # ponytail: N calls for N symbols at the 0.12s limiter — fine for the
+        # dashboard's single symbol; Stage 1 ranks with Angel One, not this.
         client = self._get_client()
         if client is None:
             return []
         results: list[QuoteResult] = []
-        for i in range(0, len(symbols), GROWW_QUOTE_BATCH_SIZE):
-            batch = symbols[i:i + GROWW_QUOTE_BATCH_SIZE]
-
+        for symbol in symbols:
             def _do_request():
-                return client.get_ohlc(
-                    segment="CASH",
-                    exchange_trading_symbols=tuple(f"NSE_{s}" for s in batch),
-                )
+                return client.get_quote(exchange="NSE", segment="CASH", trading_symbol=symbol)
 
             try:
-                payload = self.quote_limiter.call(_do_request)
-                for key, ohlc in (payload or {}).items():
-                    symbol = key.replace("NSE_", "", 1)
-                    close_price = ohlc.get("close")
-                    if close_price is None:
-                        continue
-                    # get_ohlc has no previous close, so there is no day % change here —
-                    # Stage 1 ranks with Angel One; this only serves last_price.
-                    results.append(QuoteResult(symbol=symbol, last_price=float(close_price),
-                                                pct_change=float("nan")))
+                quote = self.quote_limiter.call(_do_request) or {}
+                ltp = quote.get("last_price")
+                if ltp is None:
+                    continue
+                pct = quote.get("day_change_perc")
+                results.append(QuoteResult(symbol=symbol, last_price=float(ltp),
+                                            pct_change=float(pct) if pct is not None else float("nan")))
             except Exception as e:
-                logger.warning(f"[{self.account_id}] Groww OHLC batch failed: {e}")
+                logger.warning(f"[{self.account_id}] Groww quote failed for {symbol}: {e}")
                 continue
         return results
 

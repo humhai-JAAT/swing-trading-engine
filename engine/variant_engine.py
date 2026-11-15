@@ -1,15 +1,17 @@
-"""Per-variant trailing-exit logic — 2 variants (1 universe-bot x 2 exit
-styles), each run against the SHARED data Stage 1/Stage 2 fetched once per
-cycle. No subh30 checkpoints, no intraday square-off — CNC carry-forward.
+"""Per-variant exit logic — 3 variants (1 universe-bot x 3 exit styles), each
+run against the SHARED data Stage 1/Stage 2 fetched once per cycle. No subh30
+checkpoints, no intraday square-off — CNC carry-forward.
 
-Exit: stop-loss and target are fixed %. Touching the target records when it
-happened (target_hit_at); from then on the target level is a hard floor (a
-1-minute low at or below it exits there), and the trailing MECHANISM runs on
+'ema' / 'atr': stop-loss and target are fixed %. Touching the target records
+when it happened (target_hit_at); from then on the target level is a hard floor
+(a 1-minute low at or below it exits there), and the trailing MECHANISM runs on
 1H candles that closed after the touch:
   'ema' — exits when a 1H candle closes below its own EMA9.
   'atr' — exits when price pulls back more than atr_multiplier*ATR from the
           peak reached since entry.
-Trailing exits fill at the current price, not at the triggering candle's close.
+'ema30_15m' (2026-11-15): fixed stop-loss for the WHOLE trade, no target, no
+floor; exits when a 15-minute candle that closed after entry closes below its
+EMA30. Trailing/EMA exits fill at the current price, not at the candle close.
 """
 
 from datetime import datetime, time as dtime, timedelta
@@ -34,19 +36,20 @@ SLIPPAGE_PCT = 0.05
 SESSION_END = dtime(15, 30)
 
 
-def candle_closes_at(start: pd.Timestamp) -> pd.Timestamp:
-    """Candles are stamped with their START time and NSE 1H candles begin at :15,
-    so the candle stamped H:15 closes at (H+1):15 — except the final 15:15 one,
-    which the session cuts short at 15:30. (Comparing hours instead misjudges a
-    forming candle between X:00 and X:15.)"""
-    return min(start + timedelta(hours=1), start.replace(hour=SESSION_END.hour, minute=SESSION_END.minute))
+def candle_closes_at(start: pd.Timestamp, minutes: int = 60) -> pd.Timestamp:
+    """Candles are stamped with their START time and NSE candles begin at 09:15,
+    so a candle stamped T closes at T + its interval — except the final one of
+    the day, which the session cuts short at 15:30 (e.g. the 1H 15:15 candle).
+    (Comparing hours instead misjudges a forming candle between X:00 and X:15.)"""
+    return min(start + timedelta(minutes=minutes),
+               start.replace(hour=SESSION_END.hour, minute=SESSION_END.minute))
 
 
-def discard_incomplete_candle(df: pd.DataFrame) -> pd.DataFrame:
+def discard_incomplete_candle(df: pd.DataFrame, minutes: int = 60) -> pd.DataFrame:
     """Drop the last row if that candle has not closed yet."""
     if df is None or df.empty:
         return df
-    if datetime.now(IST) < candle_closes_at(df.index[-1]):
+    if datetime.now(IST) < candle_closes_at(df.index[-1], minutes):
         return df.iloc[:-1]
     return df
 
@@ -78,9 +81,57 @@ def check_atr_trail_exit(candle_df: pd.DataFrame, peak_price: float, atr_period:
     return None
 
 
+EMA30_15M_PERIOD = 30
+EMA30_15M_INTERVAL = "15m"
+EMA30_15M_MINUTES = 15
+
+
+def check_ema30_15m_exit(candle_df: pd.DataFrame) -> float | None:
+    """ema30_15m variant: the last CLOSED 15m candle closed below its EMA30."""
+    if candle_df is None or candle_df.empty or len(candle_df) < EMA30_15M_PERIOD + 1:
+        return None
+    ema30 = indicators.ema(candle_df["Close"], EMA30_15M_PERIOD)
+    last_close = float(candle_df["Close"].iloc[-1])
+    if last_close < float(ema30.iloc[-1]):
+        return last_close
+    return None
+
+
 def _position_data_accounts() -> list[BrokerAccount]:
     accounts = get_configured_accounts()
     return accounts["groww"] + accounts["angelone"]
+
+
+def _fetch_candles_any(first: BrokerAccount, symbol: str, interval: str, period_days: int) -> "pd.DataFrame | None":
+    """`first` (the account that served the 1m data), then every other account, until one
+    returns candles — Groww answered 15m requests with nothing outside market hours."""
+    others = [a for a in _position_data_accounts() if a is not first]
+    for account in [first] + others:
+        try:
+            df = account.fetch_candles(symbol, interval=interval, period_days=period_days)
+        except Exception as e:
+            logger.warning(f"[{getattr(account, 'account_id', '?')}] {interval} candles failed for {symbol}: {e}")
+            continue
+        if df is not None and not df.empty:
+            return df
+    return None
+
+
+def _ema30_15m_exit(since_entry: pd.DataFrame, stop_price: float, account: BrokerAccount, symbol: str,
+                    entry_time: pd.Timestamp, price: float) -> "tuple[str | None, float]":
+    """Fixed stop for the whole trade (no target, no floor); otherwise exit when a 15m candle
+    that closed after entry closes below its EMA30. Returns (reason, exit_price)."""
+    for _, row in since_entry.iterrows():
+        if row["Low"] <= stop_price:
+            return "STOP_LOSS", min(stop_price, float(row["Open"]))
+    df_15 = _fetch_candles_any(account, symbol, EMA30_15M_INTERVAL, CALENDAR_FETCH_DAYS)
+    df_15 = discard_incomplete_candle(trim_to_last_n_trading_days(df_15, CANDLE_LOOKBACK_TRADING_DAYS),
+                                      minutes=EMA30_15M_MINUTES)
+    if df_15 is None or df_15.empty or candle_closes_at(df_15.index[-1], EMA30_15M_MINUTES) <= entry_time:
+        return None, price  # no 15m candle has closed since entry yet
+    if check_ema30_15m_exit(df_15) is not None:
+        return "EMA30_15M_EXIT", price  # fills at the current price, not the candle close
+    return None, price
 
 
 def fetch_minute_candles(symbol: str) -> "tuple[BrokerAccount | None, pd.DataFrame | None, list[str]]":
@@ -139,34 +190,37 @@ def _decide_and_exit(variant_id: str, variant_cfg: dict, trade: dict, settings: 
     reason = None
     exit_price = price
 
-    if not hit_at:
-        for ts, row in since_entry.iterrows():
-            if row["Low"] <= stop_price:  # also when target and stop share a bar: assume the stop came first
-                reason, exit_price = "STOP_LOSS", min(stop_price, row["Open"])
-                break
-            if row["High"] >= target_price:
-                hit_at = ts.isoformat()
-                db.mark_target_hit(variant_id, trade["id"], hit_at)
-                break
+    if variant_cfg["exit_style"] == "ema30_15m":
+        reason, exit_price = _ema30_15m_exit(since_entry, stop_price, account, symbol, entry_time, price)
+    else:
+        if not hit_at:
+            for ts, row in since_entry.iterrows():
+                if row["Low"] <= stop_price:  # also when target and stop share a bar: assume the stop came first
+                    reason, exit_price = "STOP_LOSS", min(stop_price, row["Open"])
+                    break
+                if row["High"] >= target_price:
+                    hit_at = ts.isoformat()
+                    db.mark_target_hit(variant_id, trade["id"], hit_at)
+                    break
 
-    if reason is None and hit_at:
-        hit_ts = _timestamp_ist(hit_at)
-        after_hit = since_entry[since_entry.index > hit_ts]
-        below = after_hit[after_hit["Low"] <= target_price]
-        if not below.empty:
-            reason, exit_price = "TARGET_FLOOR", min(target_price, float(below["Open"].iloc[0]))
-        else:
-            df_1h = account.fetch_candles(symbol, interval="1h", period_days=CALENDAR_FETCH_DAYS)
-            df_1h = discard_incomplete_candle(trim_to_last_n_trading_days(df_1h, CANDLE_LOOKBACK_TRADING_DAYS))
-            # only candles that closed after the touch count as trailing signals
-            if df_1h is not None and not df_1h.empty and candle_closes_at(df_1h.index[-1]) > hit_ts:
-                exit_style = variant_cfg["exit_style"]
-                if exit_style == "ema":
-                    triggered = check_ema9_trail_exit(df_1h)
-                else:
-                    triggered = check_atr_trail_exit(df_1h, peak, settings["atr_period"], settings["atr_multiplier"])
-                if triggered is not None:
-                    reason = _TRAIL_EXIT_REASON[exit_style]  # fills at the current price, not the candle close
+        if reason is None and hit_at:
+            hit_ts = _timestamp_ist(hit_at)
+            after_hit = since_entry[since_entry.index > hit_ts]
+            below = after_hit[after_hit["Low"] <= target_price]
+            if not below.empty:
+                reason, exit_price = "TARGET_FLOOR", min(target_price, float(below["Open"].iloc[0]))
+            else:
+                df_1h = account.fetch_candles(symbol, interval="1h", period_days=CALENDAR_FETCH_DAYS)
+                df_1h = discard_incomplete_candle(trim_to_last_n_trading_days(df_1h, CANDLE_LOOKBACK_TRADING_DAYS))
+                # only candles that closed after the touch count as trailing signals
+                if df_1h is not None and not df_1h.empty and candle_closes_at(df_1h.index[-1]) > hit_ts:
+                    exit_style = variant_cfg["exit_style"]
+                    if exit_style == "ema":
+                        triggered = check_ema9_trail_exit(df_1h)
+                    else:
+                        triggered = check_atr_trail_exit(df_1h, peak, settings["atr_period"], settings["atr_multiplier"])
+                    if triggered is not None:
+                        reason = _TRAIL_EXIT_REASON[exit_style]  # fills at the current price, not the candle close
 
     # No square-off — CNC carry-forward, positions hold until SL/target floor/trailing exit
     if reason:
@@ -222,7 +276,8 @@ def scan_for_entry(universe_bot_key: str, variant_cfg: dict, settings: dict, now
         trade = None
         if check.signal and entry_price is not None:
             try:
-                trade = broker.enter_position(variant_id, symbol, entry_price, settings["starting_capital"],
+                trade = broker.enter_position(variant_id, symbol, entry_price,
+                                               config.variant_capital(variant_cfg, settings),
                                                check.arm_cycle_id, settings.get("leverage_multiplier", 1.0))
             except ValueError as e:  # capital can't buy a single share: try the next candidate
                 reason = f"unaffordable: {e}"

@@ -26,7 +26,7 @@ def get_variant_rankings(settings: dict) -> pd.DataFrame:
     rows = []
     for variant_id in config.all_variant_ids():
         universe_bot_key, variant_key = variant_id.split("/", 1)
-        summary = get_summary(variant_id, settings["starting_capital"])
+        summary = get_summary(variant_id, config.variant_capital(config.VARIANTS_BY_KEY[variant_key], settings))
         rows.append({
             "variant_id": variant_id,
             "universe_bot": universe_bot_key,

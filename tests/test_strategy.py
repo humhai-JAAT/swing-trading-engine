@@ -31,7 +31,7 @@ class TestBuildIndicators:
         result = build_indicators(df)
         for col in ["ema_fast", "ema_slow", "ema_trend", "ema_trend_sma",
                      "macd", "macd_signal", "ema_sep_pct", "armed",
-                     "arm_cycle_id", "entry_signal"]:
+                     "arm_cycle_id", "entry_signal", "signal_onset_id"]:
             assert col in result.columns
 
     def test_preserves_original_columns(self):
@@ -70,7 +70,7 @@ class TestDecideEntry:
         enriched = build_indicators(df)
         result = decide_entry(enriched)
         assert result.reason in ("no_signal", "entry", "arm_cycle_already_used",
-                                  "insufficient_history")
+                                  "insufficient_history", "signal_not_fresh")
 
     def test_arm_cycle_already_used(self):
         np.random.seed(42)

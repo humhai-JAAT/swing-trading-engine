@@ -194,17 +194,25 @@ def render_variant_panel(universe_bot_key: str, variant_cfg: dict, settings: dic
                           show_force_exit: bool = False) -> None:
     variant_id = f"{universe_bot_key}/{variant_cfg['key']}"
     universe_label = config.UNIVERSE_BOTS_BY_KEY[universe_bot_key]["label"]
-    exit_label = "EMA9 trailing" if variant_cfg["exit_style"] == "ema" else "ATR trailing"
+    exit_style = variant_cfg["exit_style"]
+    exit_label = {"ema": "EMA9 trailing", "atr": "ATR trailing", "ema30_15m": "EMA30 (15m) exit"}[exit_style]
 
-    summary = metrics.get_summary(variant_id, settings["starting_capital"])
+    summary = metrics.get_summary(variant_id, config.variant_capital(variant_cfg, settings))
 
     st.markdown(f"### {universe_label} — {exit_label}")
-    st.caption(
-        f"**{exit_label}** exit (activates once price crosses the "
-        f"{settings['profit_target_pct']:.1f}% fixed target — stop-loss "
-        f"{settings['stop_loss_pct']:.1f}% until then, after which the target level is a hard floor) "
-        f"· CNC carry-forward, no intraday square-off"
-    )
+    if exit_style == "ema30_15m":
+        st.caption(
+            f"**{exit_label}**: exits when a 15-minute candle closes below its EMA30 (checked from the "
+            f"first 15m close after entry) — fixed stop-loss {settings['stop_loss_pct']:.1f}% for the whole "
+            f"trade, no target, no floor · CNC carry-forward, no intraday square-off"
+        )
+    else:
+        st.caption(
+            f"**{exit_label}** exit (activates once price crosses the "
+            f"{settings['profit_target_pct']:.1f}% fixed target — stop-loss "
+            f"{settings['stop_loss_pct']:.1f}% until then, after which the target level is a hard floor) "
+            f"· CNC carry-forward, no intraday square-off"
+        )
 
     m1, m2 = st.columns(2)
     m1.metric("Current Capital", format_currency(summary["current_capital"]))
@@ -234,17 +242,25 @@ def render_variant_panel(universe_bot_key: str, variant_cfg: dict, settings: dic
                     live_price = quotes[0].last_price
             except Exception:
                 pass
-        current_price = live_price or trade["entry_price"]
-
-        unrealized_pnl = (current_price - trade["entry_price"]) * trade["quantity"]
-        unrealized_pct = unrealized_pnl / trade["capital_used"] * 100 if trade["capital_used"] else 0.0
+        # No silent fallback to the entry price: that rendered Current == Entry and a
+        # Rs 0 unrealized P&L whenever the quote failed, which read as a data bug.
+        if live_price is not None:
+            unrealized_pnl = (live_price - trade["entry_price"]) * trade["quantity"]
+            unrealized_pct = unrealized_pnl / trade["capital_used"] * 100 if trade["capital_used"] else 0.0
+            current_str = format_currency(live_price)
+            unrealized_str = f"{format_currency(unrealized_pnl)} ({format_pct(unrealized_pct)})"
+        else:
+            current_str = unrealized_str = "— (no live quote)"
 
         target_hit = bool(trade.get("target_hit"))
-        mode_label = "Trailing (target hit)" if target_hit else "Fixed SL / target"
+        if exit_style == "ema30_15m":
+            mode_label = "Fixed SL + EMA30 (15m)"
+        else:
+            mode_label = "Trailing (target hit)" if target_hit else "Fixed SL / target"
         fields = [
             ("Symbol", trade["symbol"]), ("Entry", format_currency(trade["entry_price"])),
-            ("Current", format_currency(current_price)),
-            ("Unrealized P&L", f"{format_currency(unrealized_pnl)} ({format_pct(unrealized_pct)})"),
+            ("Current", current_str),
+            ("Unrealized P&L", unrealized_str),
             ("Mode", mode_label), ("Qty", trade["quantity"]),
             ("Peak", format_currency(trade["peak_price"])), ("Trough", format_currency(trade["trough_price"])),
             ("Capital Used", format_currency(trade["capital_used"])), ("Entered", trade["entry_time"]),

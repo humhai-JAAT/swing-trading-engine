@@ -22,7 +22,7 @@ class TestTablePrefix:
             assert table_name.startswith("ste_trades_")
 
     def test_variant_table_count(self):
-        assert len(db.VARIANT_TABLES) == 2
+        assert len(db.VARIANT_TABLES) == 3
 
     def test_variant_ids_match_config(self):
         assert set(db.VARIANT_TABLES.keys()) == set(config.all_variant_ids())
