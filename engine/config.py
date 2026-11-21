@@ -38,7 +38,7 @@ DEFAULTS = {
     "starting_capital": 50000,  # per variant; Rs 10k until 2026-11-15 (user raised all three to 50k)
     "leverage_multiplier": 1.0,
     "profit_target_pct": 3.0,
-    "stop_loss_pct": 1.5,
+    "stop_loss_pct": 2.0,  # 1.5 until 2026-11-21 (user widened SL to 2% for all variants)
     "wake_time": "09:00",
     "sleep_time": "16:00",
     "gainers_pool_size": 50,
@@ -47,8 +47,8 @@ DEFAULTS = {
     "atr_period": 14,
     "atr_multiplier": 1.5,
     "candle_interval": "1h",
-    "candle_fetch_calendar_days": 45,
-    "candle_lookback_trading_days": 25,
+    "candle_fetch_calendar_days": 150,   # 2026-11-21: 45->150 (EMA100 warmup bug, see stage2_candles.py)
+    "candle_lookback_trading_days": 90,  # 2026-11-21: 25->90
     "public_variant": "",
 }
 

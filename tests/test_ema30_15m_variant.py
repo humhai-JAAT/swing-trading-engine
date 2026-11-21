@@ -50,8 +50,11 @@ def _15m(last_start, lo, hi, n=40):
     return pd.DataFrame({"Open": close, "High": close + 1, "Low": close - 1, "Close": close}, index=idx)
 
 
+SL15 = {**config.DEFAULTS, "stop_loss_pct": 1.5}  # pin SL for the explicit-stop test (DEFAULTS is now 2.0)
+
+
 def _open_trade(minute_bars):
-    """Entry 100 x 10 on Rs 1000 capital: stop 98.5 (target would be 103 — irrelevant here)."""
+    """Entry 100 x 10 on Rs 1000 capital: stop 98.0 at 2% SL (target would be 103 — irrelevant here)."""
     db.open_trade(V3, "TEST", 100.0, 10, 1000.0, 1.0, None)
     trade = {**db.get_open_trade(V3), "entry_time": "2026-09-24T10:17:00+05:30"}
     idx = pd.date_range(_ist(2026, 9, 24, 10, 18), periods=len(minute_bars), freq="1min")
@@ -92,7 +95,7 @@ class TestCheckEma30:
 class TestEma30Variant:
     def test_stop_loss_exits_at_stop(self, fresh_db):
         trade, df = _open_trade([(100, 100.5, 98.2, 98.4)])
-        r = _decide_and_exit(V3, CFG, trade, config.DEFAULTS, None, _Account(), "TEST", df)
+        r = _decide_and_exit(V3, CFG, trade, SL15, None, _Account(), "TEST", df)
         assert r["reason"] == "STOP_LOSS"
         assert r["price"] == pytest.approx(98.5 * (1 - SLIPPAGE_PCT / 100))
 

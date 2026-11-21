@@ -14,8 +14,16 @@ logger = get_logger(__name__)
 
 CANDLE_WORKERS_PER_ACCOUNT = 3
 
-CALENDAR_FETCH_DAYS = 45
-CANDLE_LOOKBACK_TRADING_DAYS = 25
+# 2026-11-21: raised from 45/25. A 25-trading-day window is only ~165 1H bars, but
+# EMA100 (MIN_BARS_REQUIRED=109) needs that many bars just to warm up, so the first
+# ~109 bars of every window carried a garbage EMA100 and the sliding window's start
+# kept re-stamping fake arm-crosses / fake "fresh" signals — the bot entered late,
+# near the top (verified on BHARTIARTL: a 25d window began ON the real-signal day, so
+# EMA100 there was ~Close, not the true value, and the real signal was computed False).
+# 90 trading days (~135 cal) fully warms EMA100 in the tradeable region and reaches
+# back far enough to see the true EMA9/EMA30 arm-cross.
+CALENDAR_FETCH_DAYS = 150
+CANDLE_LOOKBACK_TRADING_DAYS = 90
 
 
 def trim_to_last_n_trading_days(df: "pd.DataFrame | None", n_days: int) -> "pd.DataFrame | None":
