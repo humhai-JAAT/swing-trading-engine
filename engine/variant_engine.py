@@ -54,6 +54,24 @@ def discard_incomplete_candle(df: pd.DataFrame, minutes: int = 60) -> pd.DataFra
     return df
 
 
+def drop_bad_ticks(df: pd.DataFrame, max_wick_pct: float = 1.5) -> pd.DataFrame:
+    """Clip a single bar's wick to its body when it extends more than
+    max_wick_pct beyond the body. A phantom 1m tick (a one-minute spike that
+    immediately recovers) once logged a false 2.7% low on BHARTIARTL and nearly
+    fired a bogus STOP_LOSS. A real directional move carries the body (Open/Close)
+    with it, so its wick-vs-body stays small and is left untouched.
+    ponytail: fixed 1.5% single-bar wick cap; tune per universe volatility if it
+    ever clips a genuine move."""
+    if df is None or df.empty:
+        return df
+    df = df.copy()
+    body_low = df[["Open", "Close"]].min(axis=1)
+    body_high = df[["Open", "Close"]].max(axis=1)
+    df["Low"] = df["Low"].clip(lower=body_low * (1 - max_wick_pct / 100))
+    df["High"] = df["High"].clip(upper=body_high * (1 + max_wick_pct / 100))
+    return df
+
+
 def _timestamp_ist(time_str: str) -> pd.Timestamp:
     ts = pd.Timestamp(time_str)
     return IST.localize(ts) if ts.tzinfo is None else ts.tz_convert(IST)
@@ -171,6 +189,7 @@ def locked_decide_and_exit(variant_id: str, variant_cfg: dict, trade: dict, sett
 
 def _decide_and_exit(variant_id: str, variant_cfg: dict, trade: dict, settings: dict, now: datetime,
                       account: BrokerAccount, symbol: str, df_1m: pd.DataFrame) -> dict:
+    df_1m = drop_bad_ticks(df_1m)  # phantom-tick guard: both SL loops below read df_1m lows
     entry_time = _timestamp_ist(trade["entry_time"])
     quantity = trade["quantity"]
     capital_used = trade["capital_used"]

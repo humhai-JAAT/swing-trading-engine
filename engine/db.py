@@ -200,8 +200,8 @@ def open_trade(variant_id: str, symbol: str, entry_price: float, quantity: int, 
                     VALUES (:symbol, 'OPEN', :entry_time, :entry_price, :quantity, :capital_used, :leverage,
                             :entry_charges, :arm_cycle_id, :entry_price, :entry_price, :now, :now)
                     RETURNING id"""),
-            {"symbol": symbol, "entry_time": now, "entry_price": entry_price, "quantity": quantity,
-             "capital_used": capital_used, "leverage": leverage, "entry_charges": entry_charges,
+            {"symbol": symbol, "entry_time": now, "entry_price": float(entry_price), "quantity": int(quantity),
+             "capital_used": float(capital_used), "leverage": float(leverage), "entry_charges": float(entry_charges),
              "arm_cycle_id": arm_cycle_id, "now": now},
         )
         return result.scalar_one()
@@ -230,6 +230,10 @@ def mark_target_hit(variant_id: str, trade_id: int, hit_at: str) -> None:
 def close_trade(variant_id: str, trade_id: int, exit_price: float, exit_reason: str, exit_charges: float) -> None:
     table = _table(variant_id)
     now = _now().isoformat()
+    # numpy scalars (numpy>=2.0) render their repr as "np.float64(...)" when a
+    # DB driver stringifies them, which breaks the SQL — coerce to native float.
+    exit_price = float(exit_price)
+    exit_charges = float(exit_charges)
     with get_engine().begin() as conn:
         row = conn.execute(
             text(f"SELECT entry_price, quantity, capital_used, entry_charges FROM {table} WHERE id=:id"),

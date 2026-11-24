@@ -77,6 +77,19 @@ def build_indicators(df: pd.DataFrame) -> pd.DataFrame:
         & out["trend_bullish"] & out["ema_sep_ok"]
     )
     out["signal_onset_id"] = signal_onset_ids(out["entry_signal"])
+
+    # Pine consumes an arm cycle on its FIRST entry, so only the first fresh fire
+    # of a cycle is tradeable. The bot scans hourly and can miss that first fire
+    # (busy in another position, or ema_sep sitting right on the 0.6% threshold);
+    # without this, a later dip-and-return in the SAME arm cycle counted as a new
+    # fresh signal and the bot chased a late entry near the top (LALPATHLAB entered
+    # 2026-11-23 ~2056 after missing the real 2026-11-20 14:15 fire ~2008). Only
+    # the cycle's earliest onset is a real entry.
+    # ponytail: window-edge ceiling — a cycle that armed before this 90d window
+    # starts could show its first in-window onset as "first"; used_arm_cycles (DB)
+    # still blocks re-entry after any actual entry.
+    first_onset = out.groupby("arm_cycle_id")["signal_onset_id"].transform("min")
+    out["is_first_fire"] = out["entry_signal"] & (out["signal_onset_id"] == first_onset)
     return out
 
 
@@ -115,6 +128,11 @@ def decide_entry(enriched: pd.DataFrame, used_arm_cycles: set[str] = frozenset()
     # Fresh = the signal turned on with THIS closed candle (see module docstring).
     if last["signal_onset_id"] != enriched.index[-1]:
         return EntryCheck(False, last["arm_cycle_id"], close, "signal_not_fresh")
+
+    # Only the first fresh fire of an arm cycle is tradeable (Pine consumes the
+    # cycle on its first entry); a later dip-and-return is a late chase — skip it.
+    if not bool(last["is_first_fire"]):
+        return EntryCheck(False, last["arm_cycle_id"], close, "not_first_fire_in_cycle")
 
     arm_id_str = str(last["arm_cycle_id"]) if pd.notna(last["arm_cycle_id"]) else None
     if arm_id_str is not None and arm_id_str in used_arm_cycles:
